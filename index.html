@@ -87,7 +87,7 @@
 
   <div class="card">
     <h2>Bezpieczne odłączanie</h2>
-    <p class="muted">Jednorazowo na każdym komputerze: pobierz plik, kliknij go dwukrotnie i potwierdź „Tak”. Przy pierwszym wysuwaniu Chrome zapyta o otwarcie „wysun-dyktafon”: zaznacz „Zawsze zezwalaj” i kliknij „Otwórz”.</p>
+    <p class="muted">Jednorazowo na każdym komputerze: pobierz plik, kliknij go dwukrotnie i potwierdź „Tak”. Przy pierwszym wysuwaniu Chrome zapyta o otwarcie „Windows PowerShell”: zaznacz „Zawsze zezwalaj” i kliknij „Otwórz Windows PowerShell”. Po aktualizacji strony pobierz i uruchom instalator jeszcze raz.</p>
     <div class="buttons"><button id="regBtn">Pobierz instalator wysuwania</button></div>
   </div>
 
@@ -142,10 +142,11 @@ const PROFILES = [
 
 const POLL_MS = 1500;
 const EJECT_URL = 'wysun-dyktafon://wysun';
-const EJECT_WAIT_MS = 30000;
+const EJECT_WAIT_MS = 20000;
 
-// Rejestruje w Windows (bez uprawnień administratora) adres wysun-dyktafon://,
-// który wysuwa każdy dysk wymienny z plikiem konfiguracyjnym dyktafonu
+// Rejestruje w Windows (bez uprawnień administratora) adres wysun-dyktafon://.
+// Polecenie szuka dysku z plikiem UserConfig.txt, wywołuje na nim „Wysuń” (nazwa polska lub angielska),
+// sprawdza, czy dysk zniknął, zapisuje przebieg w %TEMP%\wysun-dyktafon.log i pokazuje okienko przy błędzie.
 const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
 
 [HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon]
@@ -153,7 +154,7 @@ const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon\shell\open\command]
-@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2' | Where-Object { Test-Path ($_.DeviceID + '\\UserConfig.txt') } | ForEach-Object { (New-Object -ComObject Shell.Application).Namespace(17).ParseName($_.DeviceID).InvokeVerb('Eject') }; Start-Sleep -Seconds 2\""
+@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; Add-Type -AssemblyName System.Windows.Forms; $dr=@(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and ($_.DriveType -eq 2 -or $_.DriveType -eq 3) -and (Test-Path ($_.DeviceID+'\\UserConfig.txt')) }); if($dr.Count -eq 0){L 'Nie znaleziono dyktafonu'; [System.Windows.Forms.MessageBox]::Show('Nie znaleziono podłączonego dyktafonu.','Wysuwanie dyktafonu')|Out-Null; exit}; $sh=New-Object -ComObject Shell.Application; foreach($d in $dr){$id=$d.DeviceID; $it=$sh.Namespace(17).ParseName($id); $v=$it.Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id+' '+$v.Name); $v.DoIt()}else{L ('Brak polecenia Wysuń dla '+$id)}; $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono '+$id)}else{L ('Nie odłączono '+$id); [System.Windows.Forms.MessageBox]::Show('Nie udało się bezpiecznie odłączyć dyktafonu '+$id+'. Użyj „Wysuń” w Eksploratorze.','Wysuwanie dyktafonu')|Out-Null}}\""
 `;
 const pad = n => String(n).padStart(2, '0');
 function formatN5Time(d) {
@@ -230,10 +231,13 @@ function tickClock() {
 }
 
 // Okienko z pytaniem Tak/Nie; Esc lub zamknięcie = Nie
-function askUser(title, text) {
+function askUser(title, text, yesLabel = 'Tak, usuń', noLabel = 'Nie, zostaw', danger = true) {
   const dlg = $('ask');
   $('askTitle').textContent = title;
   $('askText').textContent = text;
+  $('askYes').textContent = yesLabel;
+  $('askYes').className = danger ? 'danger' : 'primary';
+  $('askNo').textContent = noLabel;
   const prevTitle = document.title;
   document.title = '❗ Wymagana decyzja';
   return new Promise(resolve => {
@@ -357,6 +361,16 @@ async function ejectDevice() {
     setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
     return;
   }
+  // Chrome otwiera wysun-dyktafon:// tylko tuż po kliknięciu, więc w razie potrzeby prosimy o nie
+  if (!navigator.userActivation?.isActive) {
+    setStatus('ok', 'Zmiany zapisane', 'Kliknij „Odłącz”, aby bezpiecznie odłączyć dyktafon.');
+    const go = await askUser('Odłączyć dyktafon?', 'Zmiany są zapisane na urządzeniu. Kliknij „Odłącz”, aby go bezpiecznie odłączyć.',
+      'Odłącz', 'Nie teraz', false);
+    if (!go) {
+      setStatus('ok', 'Zmiany zapisane', 'Przed wyjęciem kabla kliknij „Wysuń dyktafon” albo „Wysuń” w Eksploratorze.');
+      return;
+    }
+  }
   setStatus('busy', 'Odłączam dyktafon…', 'Nie wyjmuj jeszcze kabla.');
   log('Wysyłam polecenie bezpiecznego odłączenia');
   location.href = EJECT_URL;
@@ -415,9 +429,13 @@ async function countFiles(d) {
   return n;
 }
 
+// Odczyt z właśnie odłączonego dysku potrafi się zawiesić, więc nie czekamy dłużej niż 3 s
+const withTimeout = (promise, ms) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))]);
+
 async function findConfig() {
   for (const name of new Set(PROFILES.map(p => p.configFile))) {
-    try { return await dir.getFileHandle(name); } catch { /* brak pliku albo brak urządzenia */ }
+    try { return await withTimeout(dir.getFileHandle(name), 3000); } catch { /* brak pliku albo brak urządzenia */ }
   }
   return null;
 }
