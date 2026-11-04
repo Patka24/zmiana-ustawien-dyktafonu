@@ -78,9 +78,17 @@
       <button class="primary" id="resumeBtn" hidden>Wznów czuwanie</button>
       <button id="runBtn" hidden>Zastosuj ustawienia teraz</button>
       <button id="filesBtn">Wybierz pliki ręcznie</button>
+      <button id="ejectBtn">Wysuń dyktafon</button>
     </div>
     <label class="auto"><input type="checkbox" id="autoChk" checked> Automatycznie konfiguruj dyktafon zaraz po podłączeniu</label>
+    <label class="auto"><input type="checkbox" id="ejectChk" checked> Automatycznie wysuń dyktafon po zapisaniu zmian</label>
     <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu <b>UserConfig.txt</b> oraz nagrania testowe.</p>
+  </div>
+
+  <div class="card">
+    <h2>Bezpieczne odłączanie</h2>
+    <p class="muted">Jednorazowo na każdym komputerze: pobierz plik, kliknij go dwukrotnie i potwierdź „Tak”. Przy pierwszym wysuwaniu Chrome zapyta o otwarcie „wysun-dyktafon”: zaznacz „Zawsze zezwalaj” i kliknij „Otwórz”.</p>
+    <div class="buttons"><button id="regBtn">Pobierz instalator wysuwania</button></div>
   </div>
 
   <div class="card">
@@ -133,6 +141,20 @@ const PROFILES = [
 ];
 
 const POLL_MS = 1500;
+const EJECT_URL = 'wysun-dyktafon://wysun';
+const EJECT_WAIT_MS = 30000;
+
+// Rejestruje w Windows (bez uprawnień administratora) adres wysun-dyktafon://,
+// który wysuwa każdy dysk wymienny z plikiem konfiguracyjnym dyktafonu
+const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon]
+@="URL:Wysun dyktafon"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon\shell\open\command]
+@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2' | Where-Object { Test-Path ($_.DeviceID + '\\UserConfig.txt') } | ForEach-Object { (New-Object -ComObject Shell.Application).Namespace(17).ParseName($_.DeviceID).InvokeVerb('Eject') }; Start-Sleep -Seconds 2\""
+`;
 const pad = n => String(n).padStart(2, '0');
 function formatN5Time(d) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())} ${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
@@ -307,8 +329,54 @@ async function configure(access) {
   return true;
 }
 
+// ===== Bezpieczne odłączanie =====
+function downloadReg() {
+  // regedit oczekuje UTF-16LE z BOM i końców linii CRLF
+  const text = '\uFEFF' + REG_TEXT.replace(/\r?\n/g, '\r\n');
+  const buf = new Uint16Array(text.length);
+  for (let i = 0; i < text.length; i++) buf[i] = text.charCodeAt(i);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buf], { type: 'application/octet-stream' }));
+  a.download = 'wysun-dyktafon.reg';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log('Pobrano instalator wysuwania: otwórz plik wysun-dyktafon.reg i potwierdź „Tak”');
+}
+
+async function waitUntilGone(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    await new Promise(r => setTimeout(r, 1000));
+    if (!await findConfig()) return true;
+  }
+  return false;
+}
+
+async function ejectDevice() {
+  if (dir && !await findConfig()) {
+    setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
+    return;
+  }
+  setStatus('busy', 'Odłączam dyktafon…', 'Nie wyjmuj jeszcze kabla.');
+  log('Wysyłam polecenie bezpiecznego odłączenia');
+  location.href = EJECT_URL;
+  if (!dir) {
+    setStatus('ok', 'Wysłano polecenie odłączenia', 'Gdy dysk dyktafonu zniknie z Eksploratora, możesz wyjąć kabel.');
+    return;
+  }
+  if (await waitUntilGone(EJECT_WAIT_MS)) {
+    ejected = true; present = false; handled = false;
+    log('Dyktafon bezpiecznie odłączony', 'o');
+    setStatus('ok', 'Gotowe! Dyktafon bezpiecznie odłączony', 'Zmiany są zapisane. Możesz wyjąć kabel i podłączyć kolejny dyktafon.');
+  } else {
+    log('Nie udało się odłączyć automatycznie', 'e');
+    setStatus('warn', 'Zmiany zapisane, ale dyktafon nie został odłączony',
+      'Kliknij „Wysuń” w Eksploratorze albo zainstaluj wysuwanie przyciskiem „Pobierz instalator wysuwania” i kliknij „Wysuń dyktafon”.');
+  }
+}
+
 // ===== Tryb czuwania (wybrany cały dysk) =====
-let dir = null, timer = null, present = false, handled = false, busy = false;
+let dir = null, timer = null, present = false, handled = false, busy = false, ejected = false;
 
 async function startWatching(handle) {
   dir = handle;
@@ -362,17 +430,17 @@ async function poll(force = false) {
     if (!cfg) {
       if (present) log('Dyktafon odłączony');
       present = false; handled = false;
-      setStatus('', 'Czekam na dyktafon…', 'Podłącz dyktafon do komputera. Strona wykryje go automatycznie.');
+      if (!ejected) setStatus('', 'Czekam na dyktafon…', 'Podłącz dyktafon do komputera. Strona wykryje go automatycznie.');
       return;
     }
-    if (!present) { present = true; log('Wykryto podłączone urządzenie'); }
+    if (!present) { present = true; ejected = false; log('Wykryto podłączone urządzenie'); }
     if (handled && !force) return;
     if (!force && !$('autoChk').checked) {
       setStatus('', 'Dyktafon podłączony', 'Kliknij „Zastosuj ustawienia teraz”, aby go skonfigurować.');
       return;
     }
     handled = true;
-    await configure(dirAccess(cfg));
+    if (await configure(dirAccess(cfg)) && $('ejectChk').checked) await ejectDevice();
   } catch (e) {
     handled = true;
     setStatus('err', 'Błąd! Zmiany mogły nie zostać zapisane', `${e.message || e}. Nie odłączaj urządzenia, spróbuj ponownie przyciskiem „Zastosuj ustawienia teraz”.`);
@@ -421,9 +489,10 @@ async function runWithFiles() {
     for (const h of byName.values()) {
       if (await h.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error(`Brak zgody na zapis pliku ${h.name}`);
     }
-    await configure(access);
+    const ok = await configure(access);
     pickedFiles = null;
     $('runBtn').hidden = true;
+    if (ok && $('ejectChk').checked) await ejectDevice();
   } catch (e) {
     setStatus('err', 'Błąd! Zmiany mogły nie zostać zapisane', String(e.message || e));
     log(`Błąd: ${e.message || e}`, 'e');
@@ -447,6 +516,12 @@ $('resumeBtn').onclick = async () => {
 };
 $('runBtn').onclick = () => pickedFiles ? runWithFiles() : poll(true);
 $('filesBtn').onclick = pickFiles;
+$('regBtn').onclick = downloadReg;
+$('ejectBtn').onclick = async () => {
+  if (busy) return;
+  busy = true;
+  try { await ejectDevice(); } finally { busy = false; }
+};
 
 (async function init() {
   renderProfiles();
