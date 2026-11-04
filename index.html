@@ -361,16 +361,6 @@ async function ejectDevice() {
     setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
     return;
   }
-  // Chrome otwiera wysun-dyktafon:// tylko tuż po kliknięciu, więc w razie potrzeby prosimy o nie
-  if (!navigator.userActivation?.isActive) {
-    setStatus('ok', 'Zmiany zapisane', 'Kliknij „Odłącz”, aby bezpiecznie odłączyć dyktafon.');
-    const go = await askUser('Odłączyć dyktafon?', 'Zmiany są zapisane na urządzeniu. Kliknij „Odłącz”, aby go bezpiecznie odłączyć.',
-      'Odłącz', 'Nie teraz', false);
-    if (!go) {
-      setStatus('ok', 'Zmiany zapisane', 'Przed wyjęciem kabla kliknij „Wysuń dyktafon” albo „Wysuń” w Eksploratorze.');
-      return;
-    }
-  }
   setStatus('busy', 'Odłączam dyktafon…', 'Nie wyjmuj jeszcze kabla.');
   log('Wysyłam polecenie bezpiecznego odłączenia');
   location.href = EJECT_URL;
@@ -385,7 +375,7 @@ async function ejectDevice() {
   } else {
     log('Nie udało się odłączyć automatycznie', 'e');
     setStatus('warn', 'Zmiany zapisane, ale dyktafon nie został odłączony',
-      'Kliknij „Wysuń” w Eksploratorze albo zainstaluj wysuwanie przyciskiem „Pobierz instalator wysuwania” i kliknij „Wysuń dyktafon”.');
+      'Kliknij przycisk „Wysuń dyktafon” poniżej.');
   }
 }
 
