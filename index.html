@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Konfigurator dyktafonów</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #5f6b7a; --line: #dfe3ea;
+    --accent: #2457d6; --accent-text: #ffffff;
+    --ok: #17803d; --ok-bg: #e5f5ea; --warn: #9a6200; --warn-bg: #fff4dc;
+    --err: #b42318; --err-bg: #fdeceb; --info-bg: #e8eefc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --card: #1d2128; --text: #e8ebf0; --muted: #9aa4b2; --line: #313743;
+      --accent: #6d95f5; --accent-text: #0d1220;
+      --ok: #5fd08a; --ok-bg: #173022; --warn: #f0b84f; --warn-bg: #33280f;
+      --err: #ff8a80; --err-bg: #3a1a18; --info-bg: #1c2740;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 1rem; margin: 0 0 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  #status { border-radius: 12px; padding: 24px; margin-bottom: 16px; border: 1px solid var(--line); background: var(--info-bg); }
+  #status .big { font-size: 1.4rem; font-weight: 700; margin: 0 0 4px; }
+  #status p { margin: 0; }
+  #status.ok { background: var(--ok-bg); border-color: var(--ok); }
+  #status.ok .big { color: var(--ok); }
+  #status.warn { background: var(--warn-bg); border-color: var(--warn); }
+  #status.warn .big { color: var(--warn); }
+  #status.err { background: var(--err-bg); border-color: var(--err); }
+  #status.err .big { color: var(--err); }
+  #status.busy .big::after { content: ""; display: inline-block; width: .8em; height: .8em; margin-left: .5em;
+    border: 3px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -.05em; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; border-radius: 8px; padding: 10px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button[hidden] { display: none; }
+  .clock { font-variant-numeric: tabular-nums; font-size: 1.1rem; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: .9rem; }
+  td.val { font-family: ui-monospace, Consolas, monospace; white-space: nowrap; }
+  label.auto { display: flex; gap: 8px; align-items: center; margin-top: 12px; color: var(--muted); }
+  #log { font-family: ui-monospace, Consolas, monospace; font-size: .85rem; max-height: 220px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+  #log li { padding: 2px 0; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+  #log .e { color: var(--err); }
+  #log .o { color: var(--ok); }
+  .muted { color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Konfigurator dyktafonów</h1>
+  <p class="sub">Wykrywa podłączony dyktafon, usuwa nagrania testowe, ustawia datę i godzinę oraz parametry, a na koniec zapisuje zmiany na urządzeniu.</p>
+
+  <div id="status"><p class="big" id="statusTitle">Uruchamianie…</p><p id="statusText"></p></div>
+
+  <div class="card">
+    <h2>Dysk dyktafonu</h2>
+    <p class="muted" id="dirInfo">Nie wybrano dysku.</p>
+    <div class="buttons">
+      <button class="primary" id="pickBtn">Wybierz dysk dyktafonu</button>
+      <button class="primary" id="resumeBtn" hidden>Wznów czuwanie</button>
+      <button id="runBtn" hidden>Zastosuj ustawienia teraz</button>
+      <button id="filesBtn">Wybierz pliki ręcznie</button>
+    </div>
+    <label class="auto"><input type="checkbox" id="autoChk" checked> Automatycznie konfiguruj dyktafon zaraz po podłączeniu</label>
+    <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu <b>UserConfig.txt</b> oraz nagrania testowe.</p>
+  </div>
+
+  <div class="card">
+    <h2>Aktualna data i godzina</h2>
+    <div class="clock" id="clock">–</div>
+    <p class="muted">Ta wartość trafi do dyktafonu w chwili zapisu.</p>
+  </div>
+
+  <div class="card">
+    <h2>Obsługiwane modele</h2>
+    <div id="profiles"></div>
+  </div>
+
+  <div class="card">
+    <h2>Dziennik</h2>
+    <ul id="log"></ul>
+  </div>
+</main>
+
+<script>
+// ===== Profile modeli: tu dodajemy kolejne dyktafony =====
+const PROFILES = [
+  {
+    id: 'N5',
+    name: 'Dyktafon N5',
+    configFile: 'UserConfig.txt',
+    // N5 rozpoznajemy po komplecie kluczy w UserConfig.txt
+    detect: cfg => ['TIME', 'VOR', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values),
+    deleteFiles: ['Test 1.mp3', 'Test 2.mp3'],
+    settings: [
+      { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
+      { key: 'VOR',     label: 'Czułość aktywacji głosem (0–7)', value: '7' },
+      { key: 'BIT',     label: 'Jakość (5 = 512K z redukcją szumów)', value: '5' },
+      { key: 'GAIN',    label: 'Czułość nagrywania (1–7)',    value: '7' },
+      { key: 'PART',    label: 'Podział pliku (minuty)',      value: '60' },
+      { key: 'REC LED', label: 'Dioda nagrywania (0 = wył.)', value: '0' },
+    ],
+  },
+];
+
+const POLL_MS = 1500;
+const pad = n => String(n).padStart(2, '0');
+function formatN5Time(d) {
+  return `${pad(d.getHours())}:${pad(d.getMinutes())} ${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+}
+const settingValue = s => typeof s.value === 'function' ? s.value() : s.value;
+
+// ===== Plik konfiguracyjny: KLUCZ:wartość  // komentarz =====
+const LINE_RE = /^([^:/]+):(.*?)(\s*\/\/.*)?$/;
+
+function parseConfig(text) {
+  const values = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(LINE_RE);
+    if (m) values[m[1].trim()] = m[2].trim();
+  }
+  return { values };
+}
+
+// Zmienia tylko wartości, zostawia komentarze, odstępy i końce linii
+function applyConfig(text, settings) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const lines = text.split(/\r?\n/);
+  const pending = new Map(settings.map(s => [s.key, settingValue(s)]));
+  const out = lines.map(line => {
+    const m = line.match(LINE_RE);
+    if (!m) return line;
+    const key = m[1].trim();
+    if (!pending.has(key)) return line;
+    const value = pending.get(key);
+    pending.delete(key);
+    return `${m[1]}:${value}${m[3] || ''}`;
+  });
+  if (pending.size) {
+    let end = out.length;
+    while (end > 0 && out[end - 1] === '') end--;
+    out.splice(end, 0, ...[...pending].map(([k, v]) => `${k}:${v}`));
+  }
+  return out.join(eol);
+}
+
+// ===== Interfejs =====
+const $ = id => document.getElementById(id);
+function setStatus(kind, title, text = '') {
+  $('status').className = kind;
+  $('statusTitle').textContent = title;
+  $('statusText').textContent = text;
+}
+function log(msg, cls = '') {
+  const li = document.createElement('li');
+  li.textContent = `${new Date().toLocaleTimeString('pl-PL')}  ${msg}`;
+  if (cls) li.className = cls;
+  $('log').prepend(li);
+}
+
+function renderProfiles() {
+  $('profiles').innerHTML = PROFILES.map(p => `
+    <p><b>${p.name}</b>, plik <code>${p.configFile}</code>, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}</p>
+    <table><tr><th>Klucz</th><th>Opis</th><th>Wartość</th></tr>
+    ${p.settings.map(s => `<tr><td class="val">${s.key}</td><td>${s.label}</td>
+      <td class="val" ${typeof s.value === 'function' ? `data-live="${p.id}:${s.key}"` : ''}>${settingValue(s)}</td></tr>`).join('')}
+    </table>`).join('');
+}
+
+function tickClock() {
+  const now = new Date();
+  $('clock').textContent = now.toLocaleString('pl-PL', { dateStyle: 'full', timeStyle: 'medium' });
+  for (const el of document.querySelectorAll('[data-live]')) {
+    const [pid, key] = el.dataset.live.split(':');
+    const s = PROFILES.find(p => p.id === pid).settings.find(s => s.key === key);
+    el.textContent = settingValue(s);
+  }
+}
+
+// ===== Zapamiętanie wybranego dysku (IndexedDB) =====
+function idb(mode, fn) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('konfigurator-dyktafonow', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const tx = req.result.transaction('kv', mode);
+      const r = fn(tx.objectStore('kv'));
+      tx.oncomplete = () => resolve(r && r.result);
+      tx.onerror = () => reject(tx.error);
+    };
+  });
+}
+const saveDir = h => idb('readwrite', s => s.put(h, 'dir')).catch(() => {});
+const loadDir = () => idb('readonly', s => s.get('dir')).catch(() => null);
+
+// ===== Operacje na urządzeniu =====
+async function readText(fileHandle) {
+  return (await fileHandle.getFile()).text();
+}
+async function writeText(fileHandle, text) {
+  const w = await fileHandle.createWritable();
+  await w.write(text);
+  await w.close(); // close() zatwierdza zapis na dysku
+}
+function verify(text, profile, written) {
+  const cfg = parseConfig(text);
+  const expected = parseConfig(written);
+  return profile.settings.every(s => cfg.values[s.key] === expected.values[s.key]);
+}
+
+// files: { config: FileHandle, others: Map(nazwa -> FileHandle) | null }, remove(nazwa)
+async function configure(access) {
+  const text = await readText(access.config);
+  const cfg = parseConfig(text);
+  const profile = PROFILES.find(p => p.configFile === access.config.name && p.detect(cfg));
+  if (!profile) {
+    setStatus('warn', 'Nieznany model dyktafonu', `Plik ${access.config.name} nie pasuje do żadnego obsługiwanego modelu. Nic nie zostało zmienione.`);
+    log('Nie rozpoznano modelu, brak zmian', 'e');
+    return false;
+  }
+  log(`Rozpoznano model: ${profile.name}`);
+  setStatus('busy', `Konfiguruję: ${profile.name}`, 'Nie odłączaj urządzenia.');
+
+  for (const name of profile.deleteFiles) {
+    const r = await access.remove(name);
+    if (r === 'deleted') log(`Usunięto ${name}`, 'o');
+    else if (r === 'missing') log(`Brak pliku ${name} (pominięto)`);
+    else if (r === 'skipped') log(`Nie wybrano pliku ${name} (pominięto)`);
+  }
+
+  const newText = applyConfig(text, profile.settings);
+  await writeText(access.config, newText);
+  const check = await readText(access.config);
+  if (!verify(check, profile, newText)) throw new Error('Weryfikacja zapisu nie powiodła się: plik na urządzeniu różni się od zapisanego.');
+  const t = parseConfig(newText).values.TIME;
+  log(`Zapisano ${profile.configFile}${t ? ` (czas ${t})` : ''} i zweryfikowano`, 'o');
+
+  setStatus('ok', 'Gotowe! Ustawienia zostały zapisane na urządzeniu',
+    `${profile.name}: zmiany zapisane i sprawdzone. Możesz bezpiecznie odłączyć dyktafon.`);
+  return true;
+}
+
+// ===== Tryb czuwania (wybrany cały dysk) =====
+let dir = null, timer = null, present = false, handled = false, busy = false;
+
+async function startWatching(handle) {
+  dir = handle;
+  pickedFiles = null;
+  $('dirInfo').textContent = `Wybrany dysk / folder: ${dir.name}. Strona czuwa i sprawdza, czy dyktafon jest podłączony.`;
+  $('resumeBtn').hidden = true;
+  $('runBtn').hidden = false;
+  present = false; handled = false;
+  clearInterval(timer);
+  timer = setInterval(poll, POLL_MS);
+  await poll();
+}
+
+function dirAccess(configHandle) {
+  return {
+    config: configHandle,
+    remove: async name => {
+      try { await dir.removeEntry(name); return 'deleted'; }
+      catch (e) { if (e.name === 'NotFoundError') return 'missing'; throw e; }
+    },
+  };
+}
+
+async function findConfig() {
+  for (const name of new Set(PROFILES.map(p => p.configFile))) {
+    try { return await dir.getFileHandle(name); } catch { /* brak pliku albo brak urządzenia */ }
+  }
+  return null;
+}
+
+async function poll(force = false) {
+  if (busy || !dir) return;
+  busy = true;
+  try {
+    const cfg = await findConfig();
+    if (!cfg) {
+      if (present) log('Dyktafon odłączony');
+      present = false; handled = false;
+      setStatus('', 'Czekam na dyktafon…', 'Podłącz dyktafon do komputera. Strona wykryje go automatycznie.');
+      return;
+    }
+    if (!present) { present = true; log('Wykryto podłączone urządzenie'); }
+    if (handled && !force) return;
+    if (!force && !$('autoChk').checked) {
+      setStatus('', 'Dyktafon podłączony', 'Kliknij „Zastosuj ustawienia teraz”, aby go skonfigurować.');
+      return;
+    }
+    handled = true;
+    await configure(dirAccess(cfg));
+  } catch (e) {
+    handled = true;
+    setStatus('err', 'Błąd! Zmiany mogły nie zostać zapisane', `${e.message || e}. Nie odłączaj urządzenia, spróbuj ponownie przyciskiem „Zastosuj ustawienia teraz”.`);
+    log(`Błąd: ${e.message || e}`, 'e');
+  } finally {
+    busy = false;
+  }
+}
+
+// ===== Tryb ręczny (wybrane pojedyncze pliki) =====
+let pickedFiles = null;
+
+async function pickFiles() {
+  let handles;
+  try {
+    handles = await window.showOpenFilePicker({ id: 'dyktafon-pliki', multiple: true });
+  } catch (e) { if (e.name !== 'AbortError') log(`Błąd: ${e.message}`, 'e'); return; }
+  const byName = new Map(handles.map(h => [h.name, h]));
+  if (!PROFILES.some(p => byName.has(p.configFile))) {
+    setStatus('warn', 'Nie wybrano pliku z ustawieniami', `Zaznacz także plik ${PROFILES.map(p => p.configFile).join(' / ')}.`);
+    return;
+  }
+  // Zatrzymujemy czuwanie: pracujemy tylko na wybranych plikach
+  clearInterval(timer); dir = null;
+  pickedFiles = byName;
+  log(`Wybrano pliki: ${[...byName.keys()].join(', ')}`);
+  $('runBtn').hidden = false;
+  setStatus('', 'Pliki wybrane', 'Kliknij „Zastosuj ustawienia teraz” i zezwól Chrome na zapis zmian.');
+}
+
+// Wywoływane bezpośrednio z kliknięcia, bo Chrome wymaga gestu do zgody na zapis
+async function runWithFiles() {
+  const byName = pickedFiles;
+  const config = PROFILES.map(p => byName.get(p.configFile)).find(Boolean);
+  const access = {
+    config,
+    remove: async name => {
+      const h = byName.get(name);
+      if (!h) return 'skipped';
+      if (!h.remove) throw new Error('Ta wersja Chrome nie umie usuwać plików. Zaktualizuj przeglądarkę.');
+      await h.remove();
+      return 'deleted';
+    },
+  };
+  try {
+    for (const h of byName.values()) {
+      if (await h.requestPermission({ mode: 'readwrite' }) !== 'granted') throw new Error(`Brak zgody na zapis pliku ${h.name}`);
+    }
+    await configure(access);
+    pickedFiles = null;
+    $('runBtn').hidden = true;
+  } catch (e) {
+    setStatus('err', 'Błąd! Zmiany mogły nie zostać zapisane', String(e.message || e));
+    log(`Błąd: ${e.message || e}`, 'e');
+  }
+}
+
+// ===== Start =====
+$('pickBtn').onclick = async () => {
+  try {
+    const h = await window.showDirectoryPicker({ id: 'dyktafon', mode: 'readwrite' });
+    await saveDir(h);
+    log(`Wybrano: ${h.name}`);
+    await startWatching(h);
+  } catch (e) {
+    if (e.name !== 'AbortError') { log(`Błąd wyboru dysku: ${e.message}`, 'e'); }
+  }
+};
+$('resumeBtn').onclick = async () => {
+  const h = await loadDir();
+  if (h && await h.requestPermission({ mode: 'readwrite' }) === 'granted') await startWatching(h);
+};
+$('runBtn').onclick = () => pickedFiles ? runWithFiles() : poll(true);
+$('filesBtn').onclick = pickFiles;
+
+(async function init() {
+  renderProfiles();
+  tickClock();
+  setInterval(tickClock, 1000);
+  if (!('showDirectoryPicker' in window)) {
+    setStatus('err', 'Nieobsługiwana przeglądarka', 'Otwórz tę stronę w Google Chrome lub Microsoft Edge na komputerze.');
+    for (const b of document.querySelectorAll('button')) b.disabled = true;
+    return;
+  }
+  const saved = await loadDir();
+  if (saved) {
+    $('dirInfo').textContent = `Ostatnio używany dysk: ${saved.name}.`;
+    if (await saved.queryPermission({ mode: 'readwrite' }) === 'granted') return startWatching(saved);
+    $('resumeBtn').hidden = false;
+    setStatus('', 'Kliknij „Wznów czuwanie”', 'Chrome wymaga jednego kliknięcia, aby ponownie zezwolić na dostęp do dysku dyktafonu.');
+  } else {
+    setStatus('', 'Wybierz dysk dyktafonu', 'Podłącz dyktafon i kliknij „Wybierz dysk dyktafonu”, a następnie wskaż jego dysk (np. USB-DISK D:).');
+  }
+})();
+</script>
+</body>
+</html>
