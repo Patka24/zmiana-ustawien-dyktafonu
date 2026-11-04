@@ -55,6 +55,12 @@
   #log .e { color: var(--err); }
   #log .o { color: var(--ok); }
   .muted { color: var(--muted); font-size: .9rem; }
+  dialog { border: 1px solid var(--line); border-radius: 12px; padding: 24px; max-width: 440px; width: calc(100% - 32px);
+    background: var(--card); color: var(--text); }
+  dialog::backdrop { background: rgba(0, 0, 0, .5); }
+  dialog h3 { margin: 0 0 8px; font-size: 1.2rem; }
+  dialog p { margin: 0 0 20px; }
+  button.danger { background: var(--err); color: #fff; border-color: var(--err); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -94,6 +100,15 @@
   </div>
 </main>
 
+<dialog id="ask">
+  <h3 id="askTitle"></h3>
+  <p id="askText"></p>
+  <div class="buttons">
+    <button class="danger" id="askYes">Tak, usuń</button>
+    <button id="askNo">Nie, zostaw</button>
+  </div>
+</dialog>
+
 <script>
 // ===== Profile modeli: tu dodajemy kolejne dyktafony =====
 const PROFILES = [
@@ -104,6 +119,8 @@ const PROFILES = [
     // N5 rozpoznajemy po komplecie kluczy w UserConfig.txt
     detect: cfg => ['TIME', 'VOR', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values),
     deleteFiles: ['Test 1.mp3', 'Test 2.mp3'],
+    // Usuwane dopiero po potwierdzeniu w okienku
+    confirmDelete: ['RECORD'],
     settings: [
       { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
       { key: 'VOR',     label: 'Czułość aktywacji głosem (0–7)', value: '7' },
@@ -172,7 +189,8 @@ function log(msg, cls = '') {
 
 function renderProfiles() {
   $('profiles').innerHTML = PROFILES.map(p => `
-    <p><b>${p.name}</b>, plik <code>${p.configFile}</code>, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}</p>
+    <p><b>${p.name}</b>, plik <code>${p.configFile}</code>, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}${
+      p.confirmDelete?.length ? `; po potwierdzeniu: ${p.confirmDelete.map(f => `<code>${f}</code>`).join(', ')}` : ''}</p>
     <table><tr><th>Klucz</th><th>Opis</th><th>Wartość</th></tr>
     ${p.settings.map(s => `<tr><td class="val">${s.key}</td><td>${s.label}</td>
       <td class="val" ${typeof s.value === 'function' ? `data-live="${p.id}:${s.key}"` : ''}>${settingValue(s)}</td></tr>`).join('')}
@@ -187,6 +205,28 @@ function tickClock() {
     const s = PROFILES.find(p => p.id === pid).settings.find(s => s.key === key);
     el.textContent = settingValue(s);
   }
+}
+
+// Okienko z pytaniem Tak/Nie; Esc lub zamknięcie = Nie
+function askUser(title, text) {
+  const dlg = $('ask');
+  $('askTitle').textContent = title;
+  $('askText').textContent = text;
+  const prevTitle = document.title;
+  document.title = '❗ Wymagana decyzja';
+  return new Promise(resolve => {
+    const done = answer => {
+      $('askYes').onclick = $('askNo').onclick = dlg.oncancel = null;
+      dlg.close();
+      document.title = prevTitle;
+      resolve(answer);
+    };
+    $('askYes').onclick = () => done(true);
+    $('askNo').onclick = () => done(false);
+    dlg.oncancel = e => { e.preventDefault(); done(false); };
+    dlg.showModal();
+    $('askNo').focus();
+  });
 }
 
 // ===== Zapamiętanie wybranego dysku (IndexedDB) =====
@@ -241,6 +281,20 @@ async function configure(access) {
     else if (r === 'skipped') log(`Nie wybrano pliku ${name} (pominięto)`);
   }
 
+  for (const name of profile.confirmDelete || []) {
+    if (!access.inspect) { log(`${name}: w trybie ręcznym nie można usuwać folderów (pominięto)`); continue; }
+    const info = await access.inspect(name);
+    if (!info) { log(`Brak ${name} (pominięto)`); continue; }
+    const what = info.kind === 'directory' ? `folder ${name} (plików w środku: ${info.count})` : `plik ${name}`;
+    setStatus('warn', 'Czekam na Twoją decyzję', `Czy usunąć ${what}?`);
+    const yes = await askUser(`Usunąć ${name}?`,
+      `Na dyktafonie jest ${what}. Usunięcie jest nieodwracalne, nagrania z tego folderu przepadną.`);
+    setStatus('busy', `Konfiguruję: ${profile.name}`, 'Nie odłączaj urządzenia.');
+    if (!yes) { log(`${name}: pozostawiono (wybrano „Nie”)`); continue; }
+    await access.removeEntry(name);
+    log(`Usunięto ${name}`, 'o');
+  }
+
   const newText = applyConfig(text, profile.settings);
   await writeText(access.config, newText);
   const check = await readText(access.config);
@@ -275,7 +329,22 @@ function dirAccess(configHandle) {
       try { await dir.removeEntry(name); return 'deleted'; }
       catch (e) { if (e.name === 'NotFoundError') return 'missing'; throw e; }
     },
+    inspect: async name => {
+      for await (const [n, h] of dir.entries()) {
+        if (n.toLowerCase() !== name.toLowerCase()) continue;
+        if (h.kind === 'file') return { kind: 'file' };
+        return { kind: 'directory', count: await countFiles(h) };
+      }
+      return null;
+    },
+    removeEntry: name => dir.removeEntry(name, { recursive: true }),
   };
+}
+
+async function countFiles(d) {
+  let n = 0;
+  for await (const h of d.values()) n += h.kind === 'file' ? 1 : await countFiles(h);
+  return n;
 }
 
 async function findConfig() {
