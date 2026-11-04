@@ -82,7 +82,7 @@
     </div>
     <label class="auto"><input type="checkbox" id="autoChk" checked> Automatycznie konfiguruj dyktafon zaraz po podłączeniu</label>
     <label class="auto"><input type="checkbox" id="ejectChk" checked> Automatycznie wysuń dyktafon po zapisaniu zmian</label>
-    <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu <b>UserConfig.txt</b> oraz nagrania testowe.</p>
+    <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu plik z ustawieniami (<b>UserConfig.txt</b> albo <b>FACTORY.TXT</b>) oraz nagrania testowe.</p>
   </div>
 
   <div class="card">
@@ -118,12 +118,19 @@
 </dialog>
 
 <script>
+// ===== Formaty plików z ustawieniami =====
+// N5:  KLUCZ:wartość   // komentarz      (wartość może zawierać spacje, np. TIME:12:00 2025/08/22)
+const N5_LINE_RE = /^([^:/]+):(.*?)(\s*\/\/.*)?$/;
+// Q63: KLUCZ:wartość   (komentarz)       (wartość bez spacji, np. SECTION:(300), TIME:11:38:05)
+const Q63_LINE_RE = /^([^:(]+):(\S*)(\s.*)?$/;
+
 // ===== Profile modeli: tu dodajemy kolejne dyktafony =====
 const PROFILES = [
   {
     id: 'N5',
     name: 'Dyktafon N5',
     configFile: 'UserConfig.txt',
+    lineRe: N5_LINE_RE,
     // N5 rozpoznajemy po komplecie kluczy w UserConfig.txt
     detect: cfg => ['TIME', 'VOR', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values),
     deleteFiles: ['Test 1.mp3', 'Test 2.mp3'],
@@ -136,6 +143,31 @@ const PROFILES = [
       { key: 'GAIN',    label: 'Czułość nagrywania (1–7)',    value: '7' },
       { key: 'PART',    label: 'Podział pliku (minuty)',      value: '60' },
       { key: 'REC LED', label: 'Dioda nagrywania (0 = wył.)', value: '0' },
+    ],
+  },
+  {
+    id: 'Q63',
+    name: 'Dyktafon Q63',
+    configFile: 'FACTORY.TXT',
+    lineRe: Q63_LINE_RE,
+    detect: cfg => ['VOR', 'DENOISE', 'AGC', 'BIT RATE', 'GAIN', 'SECTION', 'DATE', 'TIME', 'RECLED'].every(k => k in cfg.values),
+    deleteFiles: ['It.is.Ok.mp3', 'Walking In The Sun.mp3'],
+    confirmDelete: ['RECORD'],
+    settings: [
+      { key: 'DATE',     label: 'Data (rok-miesiąc-dzień)',        value: () => formatQ63Date(new Date()) },
+      { key: 'TIME',     label: 'Godzina',                          value: () => formatQ63Time(new Date()) },
+      { key: 'VOR',      label: 'Aktywacja głosem (0 = wył., 1–8)', value: '5' },
+      { key: 'DENOISE',  label: 'Redukcja szumów (0–31)',           value: '15' },
+      { key: 'AGC',      label: 'Automatyczna głośność (0–28)',     value: '28' },
+      { key: 'BIT RATE', label: 'Jakość (4 = 256 kb/s)',            value: '4' },
+      { key: 'GAIN',     label: 'Czułość nagrywania (0–7)',         value: '7' },
+      { key: 'SECTION',  label: 'Podział pliku (minuty)',           value: '(300)' },
+      { key: 'TIMER',    label: 'Nagrywanie o stałej porze (0 = wył.)', value: '0' },
+      { key: 'START',    label: 'Start nagrywania o stałej porze', value: '13:14:00' },
+      { key: 'TIMELONG', label: 'Długość nagrywania o stałej porze (minuty)', value: '(120)' },
+      { key: 'CYCLE',    label: 'Cykl nagrywania (dni)',            value: '(030)' },
+      { key: 'RECLED',   label: 'Dioda nagrywania (0 = wył.)',      value: '0' },
+      { key: 'LAN',      label: 'Język (0 = angielski)',            value: '0' },
     ],
   },
 ];
@@ -162,39 +194,46 @@ const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon\shell\open\command]
-@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; Add-Type -AssemblyName System.Windows.Forms; $dr=@(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and ($_.DriveType -eq 2 -or $_.DriveType -eq 3) -and (Test-Path ($_.DeviceID+'\\UserConfig.txt')) }); if($dr.Count -eq 0){L 'Nie znaleziono dyktafonu'; [System.Windows.Forms.MessageBox]::Show('Nie znaleziono podłączonego dyktafonu.','Wysuwanie dyktafonu')|Out-Null; exit}; $sh=New-Object -ComObject Shell.Application; foreach($d in $dr){$id=$d.DeviceID; $it=$sh.Namespace(17).ParseName($id); $v=$it.Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id+' '+$v.Name); $v.DoIt()}else{L ('Brak polecenia Wysuń dla '+$id)}; $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono '+$id)}else{L ('Nie odłączono '+$id); [System.Windows.Forms.MessageBox]::Show('Nie udało się bezpiecznie odłączyć dyktafonu '+$id+'. Użyj „Wysuń” w Eksploratorze.','Wysuwanie dyktafonu')|Out-Null}}\""
+@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; Add-Type -AssemblyName System.Windows.Forms; $dr=@(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and ($_.DriveType -eq 2 -or $_.DriveType -eq 3) -and ((Test-Path ($_.DeviceID+'\\UserConfig.txt')) -or (Test-Path ($_.DeviceID+'\\FACTORY.TXT'))) }); if($dr.Count -eq 0){L 'Nie znaleziono dyktafonu'; [System.Windows.Forms.MessageBox]::Show('Nie znaleziono podłączonego dyktafonu.','Wysuwanie dyktafonu')|Out-Null; exit}; $sh=New-Object -ComObject Shell.Application; foreach($d in $dr){$id=$d.DeviceID; $it=$sh.Namespace(17).ParseName($id); $v=$it.Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id+' '+$v.Name); $v.DoIt()}else{L ('Brak polecenia Wysuń dla '+$id)}; $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono '+$id)}else{L ('Nie odłączono '+$id); [System.Windows.Forms.MessageBox]::Show('Nie udało się bezpiecznie odłączyć dyktafonu '+$id+'. Użyj „Wysuń” w Eksploratorze.','Wysuwanie dyktafonu')|Out-Null}}\""
 `;
 const pad = n => String(n).padStart(2, '0');
 function formatN5Time(d) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())} ${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
 }
+const formatQ63Date = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const formatQ63Time = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 const settingValue = s => typeof s.value === 'function' ? s.value() : s.value;
+const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 
-// ===== Plik konfiguracyjny: KLUCZ:wartość  // komentarz =====
-const LINE_RE = /^([^:/]+):(.*?)(\s*\/\/.*)?$/;
-
-function parseConfig(text) {
+// ===== Plik konfiguracyjny =====
+function parseConfig(text, lineRe) {
   const values = {};
   for (const line of text.split(/\r?\n/)) {
-    const m = line.match(LINE_RE);
+    const m = line.match(lineRe);
     if (m) values[m[1].trim()] = m[2].trim();
   }
   return { values };
 }
 
-// Zmienia tylko wartości, zostawia komentarze, odstępy i końce linii
-function applyConfig(text, settings) {
+// Zmienia tylko wartości, zostawia komentarze (w tej samej kolumnie), odstępy i końce linii
+function applyConfig(text, settings, lineRe) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const lines = text.split(/\r?\n/);
   const pending = new Map(settings.map(s => [s.key, settingValue(s)]));
   const out = lines.map(line => {
-    const m = line.match(LINE_RE);
+    const m = line.match(lineRe);
     if (!m) return line;
     const key = m[1].trim();
     if (!pending.has(key)) return line;
     const value = pending.get(key);
     pending.delete(key);
-    return `${m[1]}:${value}${m[3] || ''}`;
+    let rest = m[3] || '';
+    const gap = rest.match(/^\s*/)[0];
+    if (gap && !gap.includes('\t')) {
+      const width = Math.max(1, gap.length - (value.length - m[2].length));
+      rest = ' '.repeat(width) + rest.slice(gap.length);
+    }
+    return `${m[1]}:${value}${rest}`;
   });
   if (pending.size) {
     let end = out.length;
@@ -290,16 +329,15 @@ async function writeText(fileHandle, text) {
   await w.close(); // close() zatwierdza zapis na dysku
 }
 function verify(text, profile, written) {
-  const cfg = parseConfig(text);
-  const expected = parseConfig(written);
+  const cfg = parseConfig(text, profile.lineRe);
+  const expected = parseConfig(written, profile.lineRe);
   return profile.settings.every(s => cfg.values[s.key] === expected.values[s.key]);
 }
 
 // files: { config: FileHandle, others: Map(nazwa -> FileHandle) | null }, remove(nazwa)
 async function configure(access) {
   const text = await readText(access.config);
-  const cfg = parseConfig(text);
-  const profile = PROFILES.find(p => p.configFile === access.config.name && p.detect(cfg));
+  const profile = PROFILES.find(p => sameName(p.configFile, access.config.name) && p.detect(parseConfig(text, p.lineRe)));
   if (!profile) {
     setStatus('warn', 'Nieznany model dyktafonu', `Plik ${access.config.name} nie pasuje do żadnego obsługiwanego modelu. Nic nie zostało zmienione.`);
     log('Nie rozpoznano modelu, brak zmian', 'e');
@@ -319,6 +357,7 @@ async function configure(access) {
     if (!access.inspect) { log(`${name}: w trybie ręcznym nie można usuwać folderów (pominięto)`); continue; }
     const info = await access.inspect(name);
     if (!info) { log(`Brak ${name} (pominięto)`); continue; }
+    if (info.kind === 'directory' && info.count === 0) { log(`${name} jest pusty, pozostawiono`); continue; }
     const what = info.kind === 'directory' ? `folder ${name} (plików w środku: ${info.count})` : `plik ${name}`;
     setStatus('warn', 'Czekam na Twoją decyzję', `Czy usunąć ${what}?`);
     const yes = await askUser(`Usunąć ${name}?`,
@@ -329,11 +368,11 @@ async function configure(access) {
     log(`Usunięto ${name}`, 'o');
   }
 
-  const newText = applyConfig(text, profile.settings);
+  const newText = applyConfig(text, profile.settings, profile.lineRe);
   await writeText(access.config, newText);
   const check = await readText(access.config);
   if (!verify(check, profile, newText)) throw new Error('Weryfikacja zapisu nie powiodła się: plik na urządzeniu różni się od zapisanego.');
-  const t = parseConfig(newText).values.TIME;
+  const t = parseConfig(newText, profile.lineRe).values.TIME;
   log(`Zapisano ${profile.configFile}${t ? ` (czas ${t})` : ''} i zweryfikowano`, 'o');
 
   setStatus('ok', 'Gotowe! Ustawienia zostały zapisane na urządzeniu',
@@ -482,15 +521,15 @@ async function pickFiles() {
   try {
     handles = await window.showOpenFilePicker({ id: 'dyktafon-pliki', multiple: true });
   } catch (e) { if (e.name !== 'AbortError') log(`Błąd: ${e.message}`, 'e'); return; }
-  const byName = new Map(handles.map(h => [h.name, h]));
-  if (!PROFILES.some(p => byName.has(p.configFile))) {
+  const byName = new Map(handles.map(h => [h.name.toLowerCase(), h])); // nazwy bez rozróżniania wielkości liter, jak w Windows
+  if (!PROFILES.some(p => byName.has(p.configFile.toLowerCase()))) {
     setStatus('warn', 'Nie wybrano pliku z ustawieniami', `Zaznacz także plik ${PROFILES.map(p => p.configFile).join(' / ')}.`);
     return;
   }
   // Zatrzymujemy czuwanie: pracujemy tylko na wybranych plikach
   clearInterval(timer); dir = null;
   pickedFiles = byName;
-  log(`Wybrano pliki: ${[...byName.keys()].join(', ')}`);
+  log(`Wybrano pliki: ${[...byName.values()].map(h => h.name).join(', ')}`);
   $('runBtn').hidden = false;
   setStatus('', 'Pliki wybrane', 'Kliknij „Zastosuj ustawienia teraz” i zezwól Chrome na zapis zmian.');
 }
@@ -498,11 +537,11 @@ async function pickFiles() {
 // Wywoływane bezpośrednio z kliknięcia, bo Chrome wymaga gestu do zgody na zapis
 async function runWithFiles() {
   const byName = pickedFiles;
-  const config = PROFILES.map(p => byName.get(p.configFile)).find(Boolean);
+  const config = PROFILES.map(p => byName.get(p.configFile.toLowerCase())).find(Boolean);
   const access = {
     config,
     remove: async name => {
-      const h = byName.get(name);
+      const h = byName.get(name.toLowerCase());
       if (!h) return 'skipped';
       if (!h.remove) throw new Error('Ta wersja Chrome nie umie usuwać plików. Zaktualizuj przeglądarkę.');
       await h.remove();
