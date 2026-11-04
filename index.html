@@ -143,7 +143,7 @@ const PROFILES = [
 const POLL_MS = 1500;
 const EJECT_URL = 'wysun-dyktafon://wysun';
 const EJECT_WAIT_MS = 20000;
-const EJECT_QUIET_MS = 6000;
+const EJECT_QUIET_MS = 15000;
 // Plik-sygnał zapisywany na dyktafonie; program w tle widzi go, usuwa i wysuwa dysk
 const EJECT_MARKER = 'wysun-dyktafon.txt';
 
@@ -155,7 +155,7 @@ const EJECT_MARKER = 'wysun-dyktafon.txt';
 const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
 
 [HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run]
-"WysunDyktafon"="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; L 'Start czuwania'; $sh=New-Object -ComObject Shell.Application; while($true){ foreach($d in [System.IO.DriveInfo]::GetDrives()){ try { if(($d.DriveType -eq 'Removable' -or $d.DriveType -eq 'Fixed') -and $d.Name -ne ($env:SystemDrive+'\\') -and $d.IsReady){ $f=$d.RootDirectory.FullName+'wysun-dyktafon.txt'; if(Test-Path $f){ Remove-Item $f -Force; Start-Sleep -Milliseconds 500; $id=$d.Name.TrimEnd('\\'); $v=$sh.Namespace(17).ParseName($id).Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id); $v.DoIt(); Start-Sleep -Seconds 10}else{L ('Brak polecenia Wysuń dla '+$id)} } } } catch { L ('Błąd: '+$_) } }; Start-Sleep -Seconds 1 }\""
+"WysunDyktafon"="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; L 'Start czuwania'; while($true){ foreach($d in [System.IO.DriveInfo]::GetDrives()){ try { if(($d.DriveType -eq 'Removable' -or $d.DriveType -eq 'Fixed') -and $d.Name -ne ($env:SystemDrive+'\\') -and $d.IsReady){ $f=$d.RootDirectory.FullName+'wysun-dyktafon.txt'; if(Test-Path $f){ Remove-Item $f -Force; Start-Sleep -Seconds 5; $id=$d.Name.TrimEnd('\\'); $v=$null; for($k=0;$k -lt 5 -and -not $v;$k++){ $sh=New-Object -ComObject Shell.Application; $v=$sh.Namespace(17).ParseName($id).Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if(-not $v){Start-Sleep -Seconds 1} }; if($v){L ('Wysuwam (w tle) '+$id); $v.DoIt(); $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono (w tle) '+$id)}else{L ('Nie odłączono (w tle) '+$id)}; Start-Sleep -Seconds 5}else{L ('Brak polecenia Wysuń (w tle) dla '+$id)} } } } catch { L ('Błąd: '+$_) } }; Start-Sleep -Seconds 1 }\""
 
 [HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon]
 @="URL:Wysun dyktafon"
@@ -358,7 +358,7 @@ function downloadReg() {
 async function waitUntilGone(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 3000));
     if (!await findConfig()) return true;
   }
   return false;
