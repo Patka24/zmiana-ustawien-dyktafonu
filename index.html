@@ -175,7 +175,7 @@ const PROFILES = [
 const POLL_MS = 1500;
 const EJECT_URL = 'wysun-dyktafon://wysun';
 const EJECT_WAIT_MS = 20000;
-const EJECT_QUIET_MS = 15000;
+const EJECT_QUIET_MS = 7000; // program w tle wysuwa dysk ok. 6 s po zapisaniu sygnału
 // Plik-sygnał zapisywany na dyktafonie; program w tle widzi go, usuwa i wysuwa dysk
 const EJECT_MARKER = 'wysun-dyktafon.txt';
 
@@ -399,7 +399,7 @@ function downloadReg() {
 async function waitUntilGone(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    await new Promise(r => setTimeout(r, 3000));
+    await new Promise(r => setTimeout(r, 1000));
     if (!await findConfig()) return true;
   }
   return false;
