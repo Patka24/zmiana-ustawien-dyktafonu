@@ -204,6 +204,8 @@ const formatQ63Date = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.
 const formatQ63Time = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 const settingValue = s => typeof s.value === 'function' ? s.value() : s.value;
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+// Nazwa bez wielkości liter, z ujednoliconymi spacjami (także twardymi i podwójnymi)
+const looseName = s => s.normalize('NFKC').toLowerCase().replace(/[\s ]+/g, ' ').trim();
 
 // ===== Plik konfiguracyjny =====
 function parseConfig(text, lineRe) {
@@ -452,13 +454,19 @@ async function startWatching(handle) {
 function dirAccess(configHandle) {
   return {
     config: configHandle,
+    // Szukamy po liście plików, bo nazwa na dyktafonie może różnić się wielkością liter lub rodzajem spacji
     remove: async name => {
-      try { await dir.removeEntry(name); return 'deleted'; }
-      catch (e) { if (e.name === 'NotFoundError') return 'missing'; throw e; }
+      const names = [];
+      for await (const [n, h] of dir.entries()) {
+        if (h.kind === 'file' && looseName(n) === looseName(name)) { await dir.removeEntry(n); return 'deleted'; }
+        names.push(n);
+      }
+      log(`Na dysku są: ${names.join(', ') || '(nic)'}`);
+      return 'missing';
     },
     inspect: async name => {
       for await (const [n, h] of dir.entries()) {
-        if (n.toLowerCase() !== name.toLowerCase()) continue;
+        if (looseName(n) !== looseName(name)) continue;
         if (h.kind === 'file') return { kind: 'file' };
         return { kind: 'directory', count: await countFiles(h) };
       }
