@@ -67,6 +67,16 @@ input, select, textarea { font: inherit; font-size: 1rem; text-transform: none; 
 textarea { resize: vertical; min-height: 44px; }
 button { font: inherit; cursor: pointer; border-radius: 6px; }
 .btn { background: var(--accent); color: var(--accent-fg); border: 0; font-weight: 600; padding: 10px 18px; }
+.mikrofon { background: var(--surface); color: var(--accent); border: 1px solid var(--accent); font-weight: 600; padding: 10px 16px; display: inline-flex; align-items: center; gap: 8px; }
+.mikrofon svg { width: 18px; height: 18px; fill: currentColor; }
+.mikrofon.nagrywa { background: var(--danger); border-color: var(--danger); color: #fff; }
+.mikrofon.nagrywa::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #fff; }
+@media (prefers-reduced-motion: no-preference) { .mikrofon.nagrywa::before { animation: miga 1s infinite; } }
+@keyframes miga { 50% { opacity: .2; } }
+.mikrofon.nagrywa svg { display: none; }
+.akcje-form { gap: 8px; flex-wrap: wrap; }
+.odtworz { background: none; border: 1px solid var(--accent); color: var(--accent); font-size: .85rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+.tresc audio { width: 100%; max-width: 320px; height: 36px; }
 .akcje-form { grid-column: 1 / -1; display: flex; justify-content: flex-end; }
 
 .podsum { display: flex; flex-wrap: wrap; gap: 8px 24px; align-items: baseline; }
@@ -129,10 +139,13 @@ details.kopia .rzad { display: flex; gap: 8px; flex-wrap: wrap; }
   <section data-panel="notatki">
     <div style="display:flex;flex-direction:column;gap:16px">
       <form class="dodaj" data-form="notatki">
-        <label class="szer">Notatka lub przypomnienie<input id="n-tekst" name="tekst" required placeholder="np. Zamówić filtry do pompy ciepła"></label>
+        <label class="szer">Notatka lub przypomnienie<input id="n-tekst" name="tekst" placeholder="np. Zamówić filtry do pompy ciepła"></label>
         <label>Przypomnij dnia<input id="n-termin" name="termin" type="datetime-local"></label>
         <label class="szer">Szczegóły (opcjonalnie)<textarea id="n-opis" name="opis" rows="2"></textarea></label>
-        <div class="akcje-form"><button class="btn" type="submit">Dodaj notatkę</button></div>
+        <div class="akcje-form">
+          <button class="mikrofon" type="button" id="mikrofon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg><span id="mikrofon-napis">Nagraj notatkę głosową</span></button>
+          <button class="btn" type="submit">Dodaj notatkę</button>
+        </div>
       </form>
       <div class="pasek"><h2>Do zrobienia</h2><label class="przelacz"><input type="checkbox" id="pz-notatki"> pokaż zrobione</label></div>
       <ul class="lista" id="lista-notatki"></ul>
@@ -175,7 +188,7 @@ details.kopia .rzad { display: flex; gap: 8px; flex-wrap: wrap; }
   <details class="kopia">
     <summary>Kopia zapasowa</summary>
     <div class="wnetrze">
-      <p style="margin:0">Wpisy są zapisane tylko w tym telefonie. Skopiuj kopię i wyślij ją sobie SMS-em lub mailem, żeby jej nie stracić albo przenieść na inny telefon.</p>
+      <p style="margin:0">Wpisy są zapisane tylko w tym telefonie. Kopia zawiera tekst wpisów, bez nagrań głosowych. Skopiuj kopię i wyślij ją sobie SMS-em lub mailem, żeby jej nie stracić albo przenieść na inny telefon.</p>
       <div class="rzad">
         <button class="btn2" type="button" id="kopiuj">Skopiuj kopię</button>
         <button class="btn2" type="button" id="wczytaj">Wczytaj kopię z pola</button>
@@ -190,7 +203,7 @@ const ZAKLADKI = ["notatki", "rozliczenia", "serwis"];
 const stan = { notatki: [], rozliczenia: [], serwis: [] };
 const pokazZrobione = { notatki: false, rozliczenia: false, serwis: false };
 const PUSTO = {
-  notatki: "Brak notatek. Wpisz pierwszą w polu powyżej i kliknij „Dodaj notatkę”.",
+  notatki: "Brak notatek. Wpisz pierwszą w polu powyżej albo nagraj ją mikrofonem.",
   rozliczenia: "Nikt nie ma u Ciebie długu. Dodaj osobę i kwotę w formularzu powyżej.",
   serwis: "Brak zaplanowanych wizyt. Dodaj klienta w formularzu powyżej.",
 };
@@ -246,6 +259,20 @@ function opisPozycji(typ, p) {
   const meta = el("div", "meta");
   if (typ === "notatki") {
     t.append(el("div", "tytul", p.tekst));
+    if (p.audio) {
+      const b = el("button", "odtworz", "▶ Odsłuchaj" + (p.dlugosc ? " (" + fmtCzas(p.dlugosc) + ")" : ""));
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        const blob = await audioDb("readonly", s => s.get(p.id)).catch(() => null);
+        if (!blob) { b.textContent = "Nagranie niedostępne"; b.disabled = true; return; }
+        const a = el("audio");
+        a.controls = true;
+        a.src = URL.createObjectURL(blob);
+        b.replaceWith(a);
+        a.play().catch(() => {});
+      });
+      t.append(b);
+    }
     if (p.opis) t.append(el("div", "opis", p.opis));
     if (p.termin) meta.append(chip("⏰ " + fmtData(p.termin, true), !p.zrobione && poTerminie(p.termin, true) ? "po-terminie" : ""));
   } else if (typ === "rozliczenia") {
@@ -324,6 +351,7 @@ function zapisz(typ, id, zmiana) {
   render(typ);
 }
 function usun(typ, id) {
+  if (stan[typ].some(x => x.id === id && x.audio)) audioDb("readwrite", s => s.delete(id)).catch(() => {});
   stan[typ] = stan[typ].filter(x => x.id !== id);
   zapiszStan();
   render(typ);
@@ -340,6 +368,7 @@ document.querySelectorAll("form[data-form]").forEach(f => {
       if (!isFinite(k) || k <= 0) return pokazKomunikat("Wpisz kwotę jako liczbę, np. 450 albo 450,50.");
       dane.kwota = Math.round(k * 100) / 100;
     }
+    if (typ === "notatki" && !dane.tekst) return pokazKomunikat("Wpisz treść notatki albo nagraj ją mikrofonem.");
     dane.zrobione = false;
     dane.utworzono = Date.now();
     dane.id = noweId();
@@ -349,6 +378,66 @@ document.querySelectorAll("form[data-form]").forEach(f => {
     f.reset();
     pokazKomunikat("");
   });
+});
+
+/* ---------- notatki głosowe (nagrania w IndexedDB, bo są za duże na localStorage) ---------- */
+function fmtCzas(s) { return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0"); }
+function audioDb(tryb, fn) {
+  return new Promise((ok, blad) => {
+    const req = indexedDB.open("grzes-nagrania", 1);
+    req.onupgradeneeded = () => req.result.createObjectStore("nagrania");
+    req.onerror = () => blad(req.error);
+    req.onsuccess = () => {
+      const tx = req.result.transaction("nagrania", tryb);
+      const r = fn(tx.objectStore("nagrania"));
+      tx.oncomplete = () => ok(r && r.result);
+      tx.onerror = () => blad(tx.error);
+    };
+  });
+}
+
+const mikBtn = document.getElementById("mikrofon");
+const mikNapis = document.getElementById("mikrofon-napis");
+let nagrywarka = null, startNagrania = 0, zegarNagrania = null;
+
+mikBtn.addEventListener("click", async () => {
+  if (nagrywarka) { nagrywarka.stop(); return; }
+  if (!navigator.mediaDevices || !window.MediaRecorder) return pokazKomunikat("Ta przeglądarka nie umie nagrywać. Otwórz stronę w Safari.");
+  let strumien;
+  try { strumien = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (e) { return pokazKomunikat("Brak dostępu do mikrofonu. Zezwól na mikrofon w Ustawienia → Safari → Mikrofon."); }
+  const kawalki = [];
+  nagrywarka = new MediaRecorder(strumien);
+  nagrywarka.ondataavailable = e => { if (e.data && e.data.size) kawalki.push(e.data); };
+  nagrywarka.onstop = async () => {
+    strumien.getTracks().forEach(t => t.stop());
+    clearInterval(zegarNagrania);
+    const dlugosc = Math.round((Date.now() - startNagrania) / 1000);
+    const typAudio = nagrywarka.mimeType || "audio/mp4";
+    nagrywarka = null;
+    mikBtn.classList.remove("nagrywa");
+    mikNapis.textContent = "Nagraj notatkę głosową";
+    if (!kawalki.length) return pokazKomunikat("Nagranie jest puste. Spróbuj jeszcze raz.");
+    const id = noweId();
+    try { await audioDb("readwrite", s => s.put(new Blob(kawalki, { type: typAudio }), id)); }
+    catch (e) { return pokazKomunikat("Nie udało się zapisać nagrania w telefonie."); }
+    const f = document.querySelector('form[data-form="notatki"]');
+    const tekst = document.getElementById("n-tekst").value.trim();
+    stan.notatki.push({
+      id, tekst: tekst || "Notatka głosowa " + new Date().toLocaleString("pl-PL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }),
+      termin: document.getElementById("n-termin").value, opis: document.getElementById("n-opis").value.trim(),
+      audio: true, dlugosc, zrobione: false, utworzono: Date.now(),
+    });
+    zapiszStan();
+    render("notatki");
+    f.reset();
+    pokazKomunikat("");
+  };
+  nagrywarka.start();
+  startNagrania = Date.now();
+  mikBtn.classList.add("nagrywa");
+  mikNapis.textContent = "Zakończ nagrywanie 0:00";
+  zegarNagrania = setInterval(() => { mikNapis.textContent = "Zakończ nagrywanie " + fmtCzas((Date.now() - startNagrania) / 1000); }, 500);
 });
 
 /* ---------- kopia zapasowa ---------- */
