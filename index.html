@@ -444,7 +444,8 @@ async function waitUntilGone(ms) {
   return false;
 }
 
-async function ejectDevice(doneText = 'Zmiany są zapisane. Możesz wyjąć kabel i podłączyć kolejny dyktafon.') {
+// viaButton: tylko kliknięcie „Wysuń dyktafon” uruchamia dodatkowo zapasowe wysun-dyktafon://
+async function ejectDevice(doneText = 'Zmiany są zapisane. Możesz wyjąć kabel i podłączyć kolejny dyktafon.', viaButton = false) {
   if (dir && !await deviceConnected()) {
     setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
     return;
@@ -459,7 +460,7 @@ async function ejectDevice(doneText = 'Zmiany są zapisane. Możesz wyjąć kabe
   // Sygnał dla programu w tle; po kliknięciu dodatkowo uruchamiamy wysuwanie przez wysun-dyktafon://
   const marker = await dir.getFileHandle(EJECT_MARKER, { create: true });
   await writeText(marker, 'wysun');
-  if (navigator.userActivation?.isActive) location.href = EJECT_URL;
+  if (viaButton && navigator.userActivation?.isActive) location.href = EJECT_URL;
   // Nie dotykamy dysku przez chwilę, bo Windows odmawia wysunięcia dysku, który jest akurat odczytywany
   await new Promise(r => setTimeout(r, EJECT_QUIET_MS));
   const gone = await waitUntilGone(EJECT_WAIT_MS);
@@ -672,7 +673,7 @@ $('regBtn').onclick = downloadReg;
 $('ejectBtn').onclick = async () => {
   if (busy) return;
   busy = true;
-  try { await ejectDevice(); } finally { busy = false; }
+  try { await ejectDevice(undefined, true); } finally { busy = false; }
 };
 
 (async function init() {
