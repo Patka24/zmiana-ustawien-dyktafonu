@@ -82,7 +82,7 @@
     </div>
     <label class="auto"><input type="checkbox" id="autoChk" checked> Automatycznie konfiguruj dyktafon zaraz po podłączeniu</label>
     <label class="auto"><input type="checkbox" id="ejectChk" checked> Automatycznie wysuń dyktafon po zapisaniu zmian</label>
-    <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu plik z ustawieniami (<b>UserConfig.txt</b> albo <b>FACTORY.TXT</b>) oraz nagrania testowe.</p>
+    <p class="muted">Jeśli Chrome nie pozwala wybrać całego dysku, kliknij „Wybierz pliki ręcznie” i zaznacz na dysku dyktafonu plik z ustawieniami (<b>UserConfig.txt</b>, <b>FACTORY.TXT</b> albo <b>MRECSET.TXT</b>) oraz nagrania testowe.</p>
   </div>
 
   <div class="card">
@@ -158,7 +158,7 @@ const PROFILES = [
   {
     id: 'B800',
     name: 'Dyktafon B800',
-    configFile: 'UserConfig.txt',
+    configFile: 'MRECSET.TXT',
     lineRe: N5_LINE_RE,
     // Ten sam format co N5, ale bez ustawienia VOR
     detect: cfg => ['TIME', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values) && !('VOR' in cfg.values),
@@ -222,7 +222,7 @@ const REG_TEXT = String.raw`Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_CURRENT_USER\Software\Classes\wysun-dyktafon\shell\open\command]
-@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; Add-Type -AssemblyName System.Windows.Forms; $dr=@(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and ($_.DriveType -eq 2 -or $_.DriveType -eq 3) -and ((Test-Path ($_.DeviceID+'\\UserConfig.txt')) -or (Test-Path ($_.DeviceID+'\\FACTORY.TXT'))) }); if($dr.Count -eq 0){L 'Nie znaleziono dyktafonu'; [System.Windows.Forms.MessageBox]::Show('Nie znaleziono podłączonego dyktafonu.','Wysuwanie dyktafonu')|Out-Null; exit}; $sh=New-Object -ComObject Shell.Application; foreach($d in $dr){$id=$d.DeviceID; $it=$sh.Namespace(17).ParseName($id); $v=$it.Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id+' '+$v.Name); $v.DoIt()}else{L ('Brak polecenia Wysuń dla '+$id)}; $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono '+$id)}else{L ('Nie odłączono '+$id); [System.Windows.Forms.MessageBox]::Show('Nie udało się bezpiecznie odłączyć dyktafonu '+$id+'. Użyj „Wysuń” w Eksploratorze.','Wysuwanie dyktafonu')|Out-Null}}\""
+@="powershell.exe -NoProfile -WindowStyle Hidden -Command \"$log=Join-Path $env:TEMP 'wysun-dyktafon.log'; function L($t){Add-Content -Path $log -Value ((Get-Date -Format s)+' '+$t)}; Add-Type -AssemblyName System.Windows.Forms; $dr=@(Get-CimInstance Win32_LogicalDisk | Where-Object { $_.DeviceID -ne $env:SystemDrive -and ($_.DriveType -eq 2 -or $_.DriveType -eq 3) -and ((Test-Path ($_.DeviceID+'\\UserConfig.txt')) -or (Test-Path ($_.DeviceID+'\\FACTORY.TXT')) -or (Test-Path ($_.DeviceID+'\\MRECSET.TXT'))) }); if($dr.Count -eq 0){L 'Nie znaleziono dyktafonu'; [System.Windows.Forms.MessageBox]::Show('Nie znaleziono podłączonego dyktafonu.','Wysuwanie dyktafonu')|Out-Null; exit}; $sh=New-Object -ComObject Shell.Application; foreach($d in $dr){$id=$d.DeviceID; $it=$sh.Namespace(17).ParseName($id); $v=$it.Verbs()|Where-Object{($_.Name -replace '&','') -match 'Wysu|Eject'}|Select-Object -First 1; if($v){L ('Wysuwam '+$id+' '+$v.Name); $v.DoIt()}else{L ('Brak polecenia Wysuń dla '+$id)}; $ok=$false; for($i=0;$i -lt 20;$i++){Start-Sleep -Milliseconds 500; if(-not (Test-Path ($id+'\\'))){$ok=$true;break}}; if($ok){L ('Odłączono '+$id)}else{L ('Nie odłączono '+$id); [System.Windows.Forms.MessageBox]::Show('Nie udało się bezpiecznie odłączyć dyktafonu '+$id+'. Użyj „Wysuń” w Eksploratorze.','Wysuwanie dyktafonu')|Out-Null}}\""
 `;
 const pad = n => String(n).padStart(2, '0');
 function formatN5Time(d) {
