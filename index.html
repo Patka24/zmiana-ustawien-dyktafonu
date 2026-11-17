@@ -164,6 +164,7 @@ const PROFILES = [
     detect: cfg => ['TIME', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values) && !('VOR' in cfg.values),
     deleteFiles: [],
     askOtherFiles: true, // o każde inne pliki na dyktafonie pytamy
+    keepFiles: ['MUSIC.LIB'], // ukryte pliki systemowe dyktafonu: zostają bez pytania
     template: B800_TEMPLATE,
     settings: [
       { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
@@ -404,7 +405,7 @@ async function configure(access) {
   if (profile.askOtherFiles) {
     if (!access.listOthers) log('Inne pliki: w trybie ręcznym nie są sprawdzane');
     else {
-      const others = await access.listOthers(access.config.name);
+      const others = (await access.listOthers(access.config.name)).filter(o => !(profile.keepFiles || []).some(k => sameName(k, o.name)));
       if (others.length) {
         const list = others.map(o => o.kind === 'directory' ? `folder ${o.name} (plików: ${o.count})` : o.name).join(', ');
         setStatus('warn', 'Czekam na Twoją decyzję', `Na dyktafonie są też: ${list}.`);
