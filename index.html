@@ -124,6 +124,16 @@ const N5_LINE_RE = /^([^:/]+):(.*?)(\s*\/\/.*)?$/;
 // Q63: KLUCZ:wartość   (komentarz)       (wartość bez spacji, np. SECTION:(300), TIME:11:38:05)
 const Q63_LINE_RE = /^([^:(]+):(\S*)(\s.*)?$/;
 
+// Fabryczny plik ustawień B800; tworzony po potwierdzeniu, gdy na urządzeniu go brakuje
+const B800_TEMPLATE = [
+  'TIME:12:00 2024/06/07',
+  'BIT:3   // Bit Rate Setting, 1 is 32K, 2 is 192K,3 is 512K,4 is 1536K',
+  'GAIN:5  // Recording Sensitivity (1--7) The larger number is, the louder recording sound will be.',
+  'PART:60 //Recording File Segmented Time (10--240 minutes). Example: 60.',
+  'REC LED:0 // Recording led on/off(0-1), 0-off 1-on.',
+  '',
+].join('\r\n');
+
 // ===== Profile modeli: tu dodajemy kolejne dyktafony =====
 const PROFILES = [
   {
@@ -140,6 +150,24 @@ const PROFILES = [
       { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
       { key: 'VOR',     label: 'Czułość aktywacji głosem (0–7)', value: '7' },
       { key: 'BIT',     label: 'Jakość (5 = 512K z redukcją szumów)', value: '5' },
+      { key: 'GAIN',    label: 'Czułość nagrywania (1–7)',    value: '7' },
+      { key: 'PART',    label: 'Podział pliku (minuty)',      value: '60' },
+      { key: 'REC LED', label: 'Dioda nagrywania (0 = wył.)', value: '0' },
+    ],
+  },
+  {
+    id: 'B800',
+    name: 'Dyktafon B800',
+    configFile: 'UserConfig.txt',
+    lineRe: N5_LINE_RE,
+    // Ten sam format co N5, ale bez ustawienia VOR
+    detect: cfg => ['TIME', 'BIT', 'GAIN', 'PART', 'REC LED'].every(k => k in cfg.values) && !('VOR' in cfg.values),
+    deleteFiles: [],
+    askOtherFiles: true, // o każde inne pliki na dyktafonie pytamy
+    template: B800_TEMPLATE,
+    settings: [
+      { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
+      { key: 'BIT',     label: 'Jakość (3 = 512K)',           value: '3' },
       { key: 'GAIN',    label: 'Czułość nagrywania (1–7)',    value: '7' },
       { key: 'PART',    label: 'Podział pliku (minuty)',      value: '60' },
       { key: 'REC LED', label: 'Dioda nagrywania (0 = wył.)', value: '0' },
@@ -261,8 +289,11 @@ function log(msg, cls = '') {
 
 function renderProfiles() {
   $('profiles').innerHTML = PROFILES.map(p => `
-    <p><b>${p.name}</b>, plik <code>${p.configFile}</code>, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}${
-      p.confirmDelete?.length ? `; po potwierdzeniu: ${p.confirmDelete.map(f => `<code>${f}</code>`).join(', ')}` : ''}</p>
+    <p><b>${p.name}</b>, plik <code>${p.configFile}</code>${
+      p.deleteFiles.length ? `, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}` : ''}${
+      p.confirmDelete?.length ? `; po potwierdzeniu: ${p.confirmDelete.map(f => `<code>${f}</code>`).join(', ')}` : ''}${
+      p.askOtherFiles ? '; o inne pliki na dyktafonie pyta' : ''}${
+      p.template ? '; gdy brak pliku ustawień, pyta o jego utworzenie' : ''}</p>
     <table><tr><th>Klucz</th><th>Opis</th><th>Wartość</th></tr>
     ${p.settings.map(s => `<tr><td class="val">${s.key}</td><td>${s.label}</td>
       <td class="val" ${typeof s.value === 'function' ? `data-live="${p.id}:${s.key}"` : ''}>${settingValue(s)}</td></tr>`).join('')}
@@ -370,6 +401,23 @@ async function configure(access) {
     log(`Usunięto ${name}`, 'o');
   }
 
+  if (profile.askOtherFiles) {
+    if (!access.listOthers) log('Inne pliki: w trybie ręcznym nie są sprawdzane');
+    else {
+      const others = await access.listOthers(access.config.name);
+      if (others.length) {
+        const list = others.map(o => o.kind === 'directory' ? `folder ${o.name} (plików: ${o.count})` : o.name).join(', ');
+        setStatus('warn', 'Czekam na Twoją decyzję', `Na dyktafonie są też: ${list}.`);
+        const yes = await askUser('Inne pliki na dyktafonie', `Na dyktafonie są też: ${list}. Usunąć je? Tego nie da się cofnąć.`,
+          'Tak, usuń wszystkie', 'Nie, zostaw');
+        setStatus('busy', `Konfiguruję: ${profile.name}`, 'Nie odłączaj urządzenia.');
+        if (yes) {
+          for (const o of others) { await access.removeEntry(o.name); log(`Usunięto ${o.name}`, 'o'); }
+        } else log(`Pozostawiono: ${list}`);
+      }
+    }
+  }
+
   const newText = applyConfig(text, profile.settings, profile.lineRe);
   await writeText(access.config, newText);
   const check = await readText(access.config);
@@ -400,13 +448,13 @@ async function waitUntilGone(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
     await new Promise(r => setTimeout(r, 1000));
-    if (!await findConfig()) return true;
+    if (!await deviceConnected()) return true;
   }
   return false;
 }
 
 async function ejectDevice() {
-  if (dir && !await findConfig()) {
+  if (dir && !await deviceConnected()) {
     setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
     return;
   }
@@ -473,7 +521,41 @@ function dirAccess(configHandle) {
       return null;
     },
     removeEntry: name => dir.removeEntry(name, { recursive: true }),
+    // Wszystko poza plikiem ustawień, plikami systemowymi Windows i pustymi folderami
+    listOthers: async configName => {
+      const others = [];
+      for await (const [n, h] of dir.entries()) {
+        if (sameName(n, configName) || sameName(n, EJECT_MARKER) || sameName(n, 'System Volume Information') || n.startsWith('.')) continue;
+        if (h.kind === 'file') { others.push({ name: n, kind: 'file' }); continue; }
+        const count = await countFiles(h);
+        if (count) others.push({ name: n, kind: 'directory', count });
+      }
+      return others;
+    },
   };
+}
+
+// Dysk jest podłączony, jeśli da się odczytać jego zawartość (także gdy jest pusty)
+async function deviceConnected() {
+  try { await withTimeout(dir.values().next(), 3000); return true; } catch { return false; }
+}
+
+// Brak pliku ustawień: pytamy, czy utworzyć go z szablonu modelu, który taki szablon ma
+async function offerCreateConfig() {
+  const p = PROFILES.find(p => p.template);
+  setStatus('warn', 'Czekam na Twoją decyzję', 'Na podłączonym urządzeniu nie ma pliku z ustawieniami.');
+  const yes = await askUser('Brak pliku z ustawieniami',
+    `Na podłączonym urządzeniu nie ma pliku z ustawieniami. Utworzyć plik ${p.configFile} z ustawieniami dla: ${p.name}?`,
+    `Utwórz plik dla ${p.id}`, 'Nie, zostaw', false);
+  if (!yes) {
+    log('Brak pliku z ustawieniami, nic nie zmieniono');
+    setStatus('warn', 'Nic nie zostało zmienione', 'Na urządzeniu nie ma pliku z ustawieniami. Aby zmienić decyzję, podłącz je ponownie.');
+    return null;
+  }
+  const handle = await dir.getFileHandle(p.configFile, { create: true });
+  await writeText(handle, p.template);
+  log(`Utworzono ${p.configFile} dla: ${p.name}`, 'o');
+  return handle;
 }
 
 async function countFiles(d) {
@@ -497,8 +579,7 @@ async function poll(force = false) {
   if (busy || !dir) return;
   busy = true;
   try {
-    const cfg = await findConfig();
-    if (!cfg) {
+    if (!await deviceConnected()) {
       if (present) log('Dyktafon odłączony');
       present = false; handled = false;
       if (!ejected) setStatus('', 'Czekam na dyktafon…', 'Podłącz dyktafon do komputera. Strona wykryje go automatycznie.');
@@ -511,6 +592,8 @@ async function poll(force = false) {
       return;
     }
     handled = true;
+    const cfg = await findConfig() || await offerCreateConfig();
+    if (!cfg) return;
     if (await configure(dirAccess(cfg)) && $('ejectChk').checked) await ejectDevice();
   } catch (e) {
     handled = true;
