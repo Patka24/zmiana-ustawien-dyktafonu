@@ -124,16 +124,6 @@ const N5_LINE_RE = /^([^:/]+):(.*?)(\s*\/\/.*)?$/;
 // Q63: KLUCZ:wartość   (komentarz)       (wartość bez spacji, np. SECTION:(300), TIME:11:38:05)
 const Q63_LINE_RE = /^([^:(]+):(\S*)(\s.*)?$/;
 
-// Fabryczny plik ustawień B800; tworzony po potwierdzeniu, gdy na urządzeniu go brakuje
-const B800_TEMPLATE = [
-  'TIME:12:00 2024/06/07',
-  'BIT:3   // Bit Rate Setting, 1 is 32K, 2 is 192K,3 is 512K,4 is 1536K',
-  'GAIN:5  // Recording Sensitivity (1--7) The larger number is, the louder recording sound will be.',
-  'PART:60 //Recording File Segmented Time (10--240 minutes). Example: 60.',
-  'REC LED:0 // Recording led on/off(0-1), 0-off 1-on.',
-  '',
-].join('\r\n');
-
 // ===== Profile modeli: tu dodajemy kolejne dyktafony =====
 const PROFILES = [
   {
@@ -165,7 +155,7 @@ const PROFILES = [
     deleteFiles: [],
     askOtherFiles: true, // o każde inne pliki na dyktafonie pytamy
     keepFiles: ['MUSIC.LIB'], // ukryte pliki systemowe dyktafonu: zostają bez pytania
-    template: B800_TEMPLATE,
+    resetIfMissing: true, // brak pliku ustawień: czyścimy dyktafon, po ponownym podłączeniu sam tworzy nowy plik
     settings: [
       { key: 'TIME',    label: 'Data i godzina',              value: () => formatN5Time(new Date()) },
       { key: 'BIT',     label: 'Jakość (3 = 512K)',           value: '3' },
@@ -294,7 +284,7 @@ function renderProfiles() {
       p.deleteFiles.length ? `, usuwane: ${p.deleteFiles.map(f => `<code>${f}</code>`).join(', ')}` : ''}${
       p.confirmDelete?.length ? `; po potwierdzeniu: ${p.confirmDelete.map(f => `<code>${f}</code>`).join(', ')}` : ''}${
       p.askOtherFiles ? '; o inne pliki na dyktafonie pyta' : ''}${
-      p.template ? '; gdy brak pliku ustawień, pyta o jego utworzenie' : ''}</p>
+      p.resetIfMissing ? '; gdy brak pliku ustawień, proponuje wyczyszczenie i ponowne podłączenie' : ''}</p>
     <table><tr><th>Klucz</th><th>Opis</th><th>Wartość</th></tr>
     ${p.settings.map(s => `<tr><td class="val">${s.key}</td><td>${s.label}</td>
       <td class="val" ${typeof s.value === 'function' ? `data-live="${p.id}:${s.key}"` : ''}>${settingValue(s)}</td></tr>`).join('')}
@@ -454,7 +444,7 @@ async function waitUntilGone(ms) {
   return false;
 }
 
-async function ejectDevice() {
+async function ejectDevice(doneText = 'Zmiany są zapisane. Możesz wyjąć kabel i podłączyć kolejny dyktafon.') {
   if (dir && !await deviceConnected()) {
     setStatus('warn', 'Nie wykryto dyktafonu', 'Nie ma czego odłączać.');
     return;
@@ -477,7 +467,7 @@ async function ejectDevice() {
   if (gone) {
     ejected = true; present = false; handled = false;
     log('Dyktafon bezpiecznie odłączony', 'o');
-    setStatus('ok', 'Gotowe! Dyktafon bezpiecznie odłączony', 'Zmiany są zapisane. Możesz wyjąć kabel i podłączyć kolejny dyktafon.');
+    setStatus('ok', 'Gotowe! Dyktafon bezpiecznie odłączony', doneText);
   } else {
     log('Nie udało się odłączyć automatycznie', 'e');
     setStatus('warn', 'Zmiany zapisane, ale dyktafon nie został odłączony',
@@ -541,22 +531,29 @@ async function deviceConnected() {
   try { await withTimeout(dir.values().next(), 3000); return true; } catch { return false; }
 }
 
-// Brak pliku ustawień: pytamy, czy utworzyć go z szablonu modelu, który taki szablon ma
-async function offerCreateConfig() {
-  const p = PROFILES.find(p => p.template);
+// Brak pliku ustawień: po potwierdzeniu usuwamy wszystko z dyktafonu (jak szybkie formatowanie) i go odłączamy.
+// Po ponownym podłączeniu dyktafon (np. B800) sam tworzy nowy plik ustawień, który strona wtedy poprawia.
+async function offerResetDevice() {
+  if (!PROFILES.some(p => p.resetIfMissing)) return;
   setStatus('warn', 'Czekam na Twoją decyzję', 'Na podłączonym urządzeniu nie ma pliku z ustawieniami.');
   const yes = await askUser('Brak pliku z ustawieniami',
-    `Na podłączonym urządzeniu nie ma pliku z ustawieniami. Utworzyć plik ${p.configFile} z ustawieniami dla: ${p.name}?`,
-    `Utwórz plik dla ${p.id}`, 'Nie, zostaw', false);
+    'Na podłączonym urządzeniu nie ma pliku z ustawieniami. Wyczyścić je (usunąć wszystkie pliki) i odłączyć? Potem podłącz je ponownie, a dyktafon utworzy nowy plik ustawień.',
+    'Wyczyść i odłącz', 'Nie, zostaw');
   if (!yes) {
     log('Brak pliku z ustawieniami, nic nie zmieniono');
     setStatus('warn', 'Nic nie zostało zmienione', 'Na urządzeniu nie ma pliku z ustawieniami. Aby zmienić decyzję, podłącz je ponownie.');
-    return null;
+    return;
   }
-  const handle = await dir.getFileHandle(p.configFile, { create: true });
-  await writeText(handle, p.template);
-  log(`Utworzono ${p.configFile} dla: ${p.name}`, 'o');
-  return handle;
+  setStatus('busy', 'Czyszczę urządzenie…', 'Nie odłączaj urządzenia.');
+  const names = [];
+  for await (const n of dir.keys()) names.push(n); // najpierw lista, bo usuwanie w trakcie przeglądania może pominąć pliki
+  for (const n of names) {
+    if (sameName(n, 'System Volume Information')) continue; // folder Windows, nie da się go usunąć
+    await dir.removeEntry(n, { recursive: true });
+    log(`Usunięto ${n}`, 'o');
+  }
+  log('Urządzenie wyczyszczone', 'o');
+  await ejectDevice('Wyjmij kabel i podłącz dyktafon ponownie. Strona sama ustawi nowy plik ustawień.');
 }
 
 async function countFiles(d) {
@@ -593,8 +590,8 @@ async function poll(force = false) {
       return;
     }
     handled = true;
-    const cfg = await findConfig() || await offerCreateConfig();
-    if (!cfg) return;
+    const cfg = await findConfig();
+    if (!cfg) { await offerResetDevice(); return; }
     if (await configure(dirAccess(cfg)) && $('ejectChk').checked) await ejectDevice();
   } catch (e) {
     handled = true;
