@@ -195,7 +195,8 @@ const POLL_MS = 1500;
 const EJECT_URL = 'wysun-dyktafon://wysun';
 const EJECT_WAIT_MS = 20000;
 const EJECT_QUIET_MS = 7000; // program w tle wysuwa dysk ok. 6 s po zapisaniu sygnału
-// Plik-sygnał zapisywany na dyktafonie; program w tle widzi go, usuwa i wysuwa dysk
+// Sygnał dla programu w tle: pusty folder o tej nazwie (nie plik, bo Chrome potrafi zablokować zapis nowego pliku
+// komunikatem „Aborted due to security policy”); program w tle go widzi, usuwa i wysuwa dysk
 const EJECT_MARKER = 'wysun-dyktafon.txt';
 
 // Instalator dla Windows (bez uprawnień administratora):
@@ -458,8 +459,8 @@ async function ejectDevice(doneText = 'Zmiany są zapisane. Możesz wyjąć kabe
     return;
   }
   // Sygnał dla programu w tle; po kliknięciu dodatkowo uruchamiamy wysuwanie przez wysun-dyktafon://
-  const marker = await dir.getFileHandle(EJECT_MARKER, { create: true });
-  await writeText(marker, 'wysun');
+  await dir.removeEntry(EJECT_MARKER).catch(() => {}); // stary sygnał w postaci pliku blokowałby utworzenie folderu
+  await dir.getDirectoryHandle(EJECT_MARKER, { create: true });
   if (viaButton && navigator.userActivation?.isActive) location.href = EJECT_URL;
   // Nie dotykamy dysku przez chwilę, bo Windows odmawia wysunięcia dysku, który jest akurat odczytywany
   await new Promise(r => setTimeout(r, EJECT_QUIET_MS));
@@ -593,7 +594,12 @@ async function poll(force = false) {
     handled = true;
     const cfg = await findConfig();
     if (!cfg) { await offerResetDevice(); return; }
-    if (await configure(dirAccess(cfg)) && $('ejectChk').checked) await ejectDevice();
+    if (!await configure(dirAccess(cfg)) || !$('ejectChk').checked) return;
+    try { await ejectDevice(); }
+    catch (e) {
+      log(`Błąd odłączania: ${e.message || e}`, 'e');
+      setStatus('warn', 'Ustawienia zapisane, ale dyktafon nie został odłączony', 'Kliknij przycisk „Wysuń dyktafon” poniżej.');
+    }
   } catch (e) {
     handled = true;
     setStatus('err', 'Błąd! Zmiany mogły nie zostać zapisane', `${e.message || e}. Nie odłączaj urządzenia, spróbuj ponownie przyciskiem „Zastosuj ustawienia teraz”.`);
