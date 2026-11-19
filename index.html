@@ -688,13 +688,19 @@ $('ejectBtn').onclick = async () => {
   const saved = await loadDir();
   if (saved) {
     $('dirInfo').textContent = `Ostatnio używany dysk: ${saved.name}.`;
-    if (await saved.queryPermission({ mode: 'readwrite' }) === 'granted') return startWatching(saved);
+    // Chrome potrafi nie odpowiedzieć o zgodę do dysku (np. gdy dysk zniknął) — wtedy nie czekamy w nieskończoność
+    let perm = 'prompt';
+    try { perm = await withTimeout(saved.queryPermission({ mode: 'readwrite' }), 3000); } catch (e) { log(`Brak odpowiedzi o dostęp do dysku: ${e.message || e}`, 'e'); }
+    if (perm === 'granted') return startWatching(saved);
     $('resumeBtn').hidden = false;
     setStatus('', 'Kliknij „Wznów czuwanie”', 'Chrome wymaga jednego kliknięcia, aby ponownie zezwolić na dostęp do dysku dyktafonu.');
   } else {
     setStatus('', 'Wybierz dysk dyktafonu', 'Podłącz dyktafon i kliknij „Wybierz dysk dyktafonu”, a następnie wskaż jego dysk (np. USB-DISK D:).');
   }
-})();
+})().catch(e => {
+  log(`Błąd przy starcie: ${e.message || e}`, 'e');
+  setStatus('', 'Wybierz dysk dyktafonu', 'Kliknij „Wybierz dysk dyktafonu” i wskaż dysk dyktafonu.');
+});
 </script>
 </body>
 </html>
